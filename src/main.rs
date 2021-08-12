@@ -1,4 +1,5 @@
 use arrow::csv::ReaderBuilder;
+use arrow::datatypes::Schema;
 use clap::{Clap, ValueHint};
 use parquet::{
     arrow::ArrowWriter,
@@ -7,8 +8,10 @@ use parquet::{
     file::properties::WriterProperties,
 };
 use serde_json::to_string_pretty;
+use std::io::BufReader;
 use std::fs::File;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 #[derive(Clap)]
 enum ParquetCompression {
@@ -103,6 +106,10 @@ struct Opts {
     /// Only print the schema
     #[clap(short = 'n', long)]
     dry: bool,
+
+    /// Custom schema definition from JSON
+    #[clap(short = 'm', long)]
+    custom_schema: Option<String>,
 }
 
 fn main() -> Result<(), ParquetError> {
@@ -113,13 +120,24 @@ fn main() -> Result<(), ParquetError> {
     let mut builder = ReaderBuilder::new()
         .has_header(opts.header.unwrap_or(true))
         .with_delimiter(opts.delimiter as u8);
-    builder = builder.infer_schema(opts.max_read_records);
+
+    if let Some(custom_schema) = opts.custom_schema {
+        let file = File::open(&custom_schema).unwrap();
+        let json_reader = BufReader::new(file);
+        let _schema_json: serde_json::Value = serde_json::from_reader(json_reader).unwrap();
+        let schema = Schema::from(&_schema_json).unwrap();
+
+        builder = builder.with_schema(Arc::new(schema));
+    } else {
+        builder = builder.infer_schema(opts.max_read_records);
+    }
 
     let reader = builder.build(input)?;
 
     if opts.print_schema || opts.dry {
         let json: String = to_string_pretty(&reader.schema().to_json()).unwrap();
-        eprintln!("Inferred Schema:\n{}", json);
+        eprintln!("Inferred Schema:\n");
+        println!("{}", json);
 
         if opts.dry {
             return Ok(());
